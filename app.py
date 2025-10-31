@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import joblib
 from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -11,102 +11,147 @@ from sklearn.pipeline import Pipeline
 # -------------------------------
 # APP CONFIG
 # -------------------------------
-st.set_page_config(page_title="📦 E-Commerce Delivery Predictor", layout="wide")
-st.title("📦 E-Commerce Delivery Prediction App")
+st.set_page_config(
+    page_title="🛒 E-Commerce Sales & Delivery Predictor",
+    layout="wide",
+    page_icon="🛍️"
+)
 
-MODEL_FILE = "decision_tree_model.joblib"
+# -------------------------------
+# CUSTOM CSS
+# -------------------------------
+st.markdown("""
+<style>
+.main {
+    background-color: #f8fafc;
+}
+h1, h2, h3 {
+    color: #003366;
+}
+.stButton > button {
+    background-color: #0078D7;
+    color: white;
+    border-radius: 10px;
+    height: 45px;
+    font-size: 16px;
+    transition: 0.3s;
+}
+.stButton > button:hover {
+    background-color: #005ea6;
+}
+.metric-box {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 15px;
+    box-shadow: 0px 3px 8px rgba(0,0,0,0.1);
+    text-align: center;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -------------------------------
+# FILES & MODELS
+# -------------------------------
+MODEL_FILE_DELIVERY = "decision_tree_model.joblib"
+MODEL_FILE_SALES = "sales_model.joblib"
 DATA_FILE = "data.csv"
 
 # -------------------------------
-# HELPER FUNCTIONS
+# TRAIN MODELS
 # -------------------------------
-
-def train_model():
-    """Train and save model from data.csv"""
+def train_delivery_model():
     if not os.path.exists(DATA_FILE):
-        st.error("❌ 'data.csv' file not found in the current folder!")
+        st.error("❌ data.csv not found!")
         return None
-
     try:
         df = pd.read_csv(DATA_FILE)
         X = df.drop("OnTimeDelivery", axis=1)
         y = df["OnTimeDelivery"]
 
-        numeric_features = [
-            "Customer_care_calls",
-            "Customer_rating",
-            "Cost_of_the_Product",
-            "Prior_purchases",
-            "Discount_offered",
-            "Weight_in_gms"
-        ]
-        categorical_features = ["Warehouse_block", "Mode_of_Shipment", "Gender"]
-        ordinal_features = ["Product_importance"]
-        importance_levels = [["low", "medium", "high"]]
+        numeric = ["Customer_care_calls", "Customer_rating", "Cost_of_the_Product",
+                   "Prior_purchases", "Discount_offered", "Weight_in_gms"]
+        categorical = ["Warehouse_block", "Mode_of_Shipment", "Gender"]
+        ordinal = ["Product_importance"]
+        levels = [["low", "medium", "high"]]
 
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ("num", StandardScaler(), numeric_features),
-                ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
-                ("ord", OrdinalEncoder(categories=importance_levels), ordinal_features)
-            ]
-        )
-
-        model = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("classifier", DecisionTreeClassifier(class_weight="balanced", max_depth=10, random_state=42))
+        preprocessor = ColumnTransformer([
+            ("num", StandardScaler(), numeric),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
+            ("ord", OrdinalEncoder(categories=levels), ordinal)
         ])
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, stratify=y, test_size=0.2, random_state=42
-        )
+        model = Pipeline([
+            ("preprocessor", preprocessor),
+            ("classifier", DecisionTreeClassifier(max_depth=10, random_state=42))
+        ])
 
+        X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
         model.fit(X_train, y_train)
-        joblib.dump(model, MODEL_FILE)
-        st.success("✅ Model trained and saved successfully!")
+        joblib.dump(model, MODEL_FILE_DELIVERY)
+        st.success("✅ Delivery Model trained successfully!")
         return model
     except Exception as e:
         st.error(f"⚠️ Training failed: {e}")
         return None
 
 
-def load_model():
-    """Load trained model"""
-    if not os.path.exists(MODEL_FILE):
+def train_sales_model():
+    if not os.path.exists(DATA_FILE):
+        st.error("❌ data.csv not found!")
         return None
     try:
-        return joblib.load(MODEL_FILE)
+        df = pd.read_csv(DATA_FILE)
+        if "Sales" not in df.columns:
+            df["Sales"] = df["Cost_of_the_Product"] * (100 - df["Discount_offered"]) / 100 * df["Prior_purchases"]
+
+        X = df.drop("Sales", axis=1)
+        y = df["Sales"]
+
+        numeric = ["Customer_care_calls", "Customer_rating", "Cost_of_the_Product",
+                   "Prior_purchases", "Discount_offered", "Weight_in_gms"]
+        categorical = ["Warehouse_block", "Mode_of_Shipment", "Gender"]
+        ordinal = ["Product_importance"]
+        levels = [["low", "medium", "high"]]
+
+        preprocessor = ColumnTransformer([
+            ("num", StandardScaler(), numeric),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
+            ("ord", OrdinalEncoder(categories=levels), ordinal)
+        ])
+
+        model = Pipeline([
+            ("preprocessor", preprocessor),
+            ("regressor", DecisionTreeRegressor(max_depth=10, random_state=42))
+        ])
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        model.fit(X_train, y_train)
+        joblib.dump(model, MODEL_FILE_SALES)
+        st.success("✅ Sales Model trained successfully!")
+        return model
     except Exception as e:
-        st.error(f"⚠️ Model loading failed: {e}")
+        st.error(f"⚠️ Training failed: {e}")
         return None
 
 
-def predict(model, data):
-    """Make prediction"""
-    proba = model.predict_proba(data)[0][1]
-    return proba
+# -------------------------------
+# LOAD MODEL FUNCTION
+# -------------------------------
+def load_model(file):
+    if not os.path.exists(file):
+        return None
+    try:
+        return joblib.load(file)
+    except Exception as e:
+        st.error(f"⚠️ Could not load model: {e}")
+        return None
+
 
 # -------------------------------
-# SIDEBAR CONTROLS
+# MAIN INTERFACE
 # -------------------------------
-st.sidebar.header("⚙️ Control Panel")
-
-model = load_model()
-if model:
-    st.sidebar.success("✅ Model Loaded")
-else:
-    st.sidebar.warning("⚠️ No trained model found")
-
-if st.sidebar.button("🚀 Train / Retrain Model"):
-    model = train_model()
-
-st.sidebar.markdown("---")
-threshold = st.sidebar.slider("Decision Threshold", 0.1, 0.9, 0.5, 0.01)
-
-# -------------------------------
-# MAIN APP INTERFACE
-# -------------------------------
-st.subheader("🧠 Enter Product and Customer Details")
+st.title("🛍️ E-Commerce Sales & Delivery Predictor")
+st.markdown("### Predict whether your order will arrive on time and estimate expected sales in ₹ INR!")
 
 col1, col2 = st.columns(2)
 
@@ -115,23 +160,29 @@ with col1:
     mode = st.selectbox("Mode of Shipment", ['Ship', 'Flight', 'Road'])
     calls = st.slider("Customer Care Calls", 2, 7, 4)
     rating = st.select_slider("Customer Rating", [1, 2, 3, 4, 5], value=3)
-    cost = st.number_input("Cost of Product (USD)", 50, 300, 150)
+    cost = st.number_input("Cost of Product (₹)", 100, 25000, 5000)
 
 with col2:
-    purchases = st.slider("Prior Purchases", 2, 10, 4)
+    purchases = st.slider("Prior Purchases", 1, 10, 4)
     importance = st.radio("Product Importance", ['low', 'medium', 'high'], horizontal=True)
     gender = st.radio("Customer Gender", ['F', 'M'], horizontal=True)
     discount = st.number_input("Discount Offered (%)", 0, 65, 10)
-    weight = st.number_input("Weight in Grams", 500, 8000, 2000)
+    weight = st.number_input("Weight (in grams)", 100, 10000, 2000)
 
 # -------------------------------
-# PREDICTION BUTTON
+# PREDICTIONS
 # -------------------------------
-if st.button("🔍 Predict Delivery Status"):
-    if model is None:
-        st.error("❌ Please train or load a model first!")
-    else:
-        try:
+delivery_model = load_model(MODEL_FILE_DELIVERY)
+sales_model = load_model(MODEL_FILE_SALES)
+
+threshold = st.slider("Delivery Decision Threshold", 0.1, 0.9, 0.5, 0.01)
+
+colA, colB = st.columns(2)
+with colA:
+    if st.button("🚚 Predict Delivery Status"):
+        if delivery_model is None:
+            st.error("❌ Please train or load the delivery model first!")
+        else:
             input_df = pd.DataFrame({
                 'Warehouse_block': [warehouse_block],
                 'Mode_of_Shipment': [mode],
@@ -144,16 +195,41 @@ if st.button("🔍 Predict Delivery Status"):
                 'Discount_offered': [discount],
                 'Weight_in_gms': [weight]
             })
+            prob = delivery_model.predict_proba(input_df)[0][1]
+            result = "🟢 On Time" if prob < threshold else "🔴 Delayed"
+            with st.container():
+                st.markdown(
+                    f"<div class='metric-box'><h3>Delivery Prediction:</h3><h2>{result}</h2><p>Delay Probability: {prob:.2f}</p></div>",
+                    unsafe_allow_html=True,
+                )
 
-            p_delay = predict(model, input_df)
-            result = 1 if p_delay >= threshold else 0
+with colB:
+    if st.button("💰 Predict Sales (₹ INR)"):
+        if sales_model is None:
+            st.error("❌ Please train or load the sales model first!")
+        else:
+            input_df = pd.DataFrame({
+                'Warehouse_block': [warehouse_block],
+                'Mode_of_Shipment': [mode],
+                'Customer_care_calls': [calls],
+                'Customer_rating': [rating],
+                'Cost_of_the_Product': [cost],
+                'Prior_purchases': [purchases],
+                'Product_importance': [importance],
+                'Gender': [gender],
+                'Discount_offered': [discount],
+                'Weight_in_gms': [weight]
+            })
+            predicted_sales = sales_model.predict(input_df)[0]
+            with st.container():
+                st.markdown(
+                    f"<div class='metric-box'><h3>Predicted Sales:</h3><h2>₹ {predicted_sales:,.2f}</h2></div>",
+                    unsafe_allow_html=True,
+                )
 
-            if result == 0:
-                st.success(f"✅ Product will *Reach On Time* (0)\n**Delay Probability:** {p_delay:.2f}")
-                st.balloons()
-            else:
-                st.error(f"⚠️ Product will *NOT Reach On Time* (1)\n**Delay Probability:** {p_delay:.2f}")
+st.markdown("---")
+st.info("💡 Tip: Train or retrain your models whenever you update your dataset for best results.")
 
-            st.info("🧭 Adjust threshold from sidebar to control prediction sensitivity.")
-        except Exception as e:
-            st.error(f"⚠️ Prediction failed: {e}")
+if st.button("🔁 Train Both Models"):
+    train_delivery_model()
+    train_sales_model()
